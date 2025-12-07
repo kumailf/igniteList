@@ -23,12 +23,6 @@ class IgniteListApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
-        scrollbarTheme: ScrollbarThemeData(
-          thumbVisibility: const MaterialStatePropertyAll(true),
-          thickness: const MaterialStatePropertyAll(16),
-          radius: const Radius.circular(10),
-          interactive: true,
-        ),
       ),
       home: const TodoListPage(),
       debugShowCheckedModeBanner: false,
@@ -95,7 +89,9 @@ class _TodoListPageState extends State<TodoListPage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final List<TodoItem> _todos = [];
   final TextEditingController _textController = TextEditingController();
+  final TextEditingController _editTextController = TextEditingController();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  String? _editingTodoId; // 正在编辑的待办项 ID
   bool _showCelebration = false;
   late ConfettiController _confettiController;
   late AnimationController _celebrationController;
@@ -174,6 +170,7 @@ class _TodoListPageState extends State<TodoListPage>
     // 停止定时器
     _stopDailyResetTimer();
     _textController.dispose();
+    _editTextController.dispose();
     _audioPlayer.dispose();
     _confettiController.dispose();
     _celebrationController.dispose();
@@ -349,6 +346,44 @@ class _TodoListPageState extends State<TodoListPage>
       _todos.removeWhere((todo) => todo.id == id);
     });
     _saveTodos();
+  }
+
+  // 开始编辑待办项文本
+  void _startEditingTodo(String id, String currentText) {
+    setState(() {
+      _editingTodoId = id;
+      _editTextController.text = currentText;
+    });
+  }
+
+  // 完成编辑待办项文本
+  void _finishEditingTodo(String id) {
+    final newText = _editTextController.text.trim();
+    if (newText.isNotEmpty) {
+      setState(() {
+        final todoIndex = _todos.indexWhere((todo) => todo.id == id);
+        if (todoIndex != -1) {
+          _todos[todoIndex].text = newText;
+        }
+        _editingTodoId = null;
+        _editTextController.clear();
+      });
+      _saveTodos();
+    } else {
+      // 如果文本为空，取消编辑
+      setState(() {
+        _editingTodoId = null;
+        _editTextController.clear();
+      });
+    }
+  }
+
+  // 取消编辑
+  void _cancelEditingTodo() {
+    setState(() {
+      _editingTodoId = null;
+      _editTextController.clear();
+    });
   }
 
   // 保存待办事项到本地存储
@@ -647,8 +682,16 @@ class _TodoListPageState extends State<TodoListPage>
     final completedCount = _todos.where((todo) => todo.isCompleted).length;
     final totalCount = _todos.length;
 
-    return Scaffold(
-      body: Stack(
+    return GestureDetector(
+      onTap: () {
+        // 点击外部区域取消编辑
+        if (_editingTodoId != null) {
+          _cancelEditingTodo();
+        }
+      },
+      behavior: HitTestBehavior.translucent,
+      child: Scaffold(
+        body: Stack(
         children: [
           // 主内容
           Column(
@@ -795,30 +838,24 @@ class _TodoListPageState extends State<TodoListPage>
                           ],
                         ),
                       )
-                    : Scrollbar(
-                        thumbVisibility: true,
-                        thickness: 16,
-                        radius: const Radius.circular(10),
-                        interactive: true,
-                        child: ReorderableListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 32, 16), // 右侧增加padding避免与滚动条重叠
-                          itemCount: _todos.length,
-                          buildDefaultDragHandles: false,
-                          onReorder: (oldIndex, newIndex) {
-                            setState(() {
-                              if (newIndex > oldIndex) {
-                                newIndex -= 1;
-                              }
-                              final item = _todos.removeAt(oldIndex);
-                              _todos.insert(newIndex, item);
-                            });
-                            _saveTodos();
-                          },
-                          itemBuilder: (context, index) {
-                            final todo = _todos[index];
-                            return _buildTodoItem(todo, index);
-                          },
-                        ),
+                    : ReorderableListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _todos.length,
+                        buildDefaultDragHandles: false,
+                        onReorder: (oldIndex, newIndex) {
+                          setState(() {
+                            if (newIndex > oldIndex) {
+                              newIndex -= 1;
+                            }
+                            final item = _todos.removeAt(oldIndex);
+                            _todos.insert(newIndex, item);
+                          });
+                          _saveTodos();
+                        },
+                        itemBuilder: (context, index) {
+                          final todo = _todos[index];
+                          return _buildTodoItem(todo, index);
+                        },
                       ),
               ),
             ],
@@ -988,6 +1025,7 @@ class _TodoListPageState extends State<TodoListPage>
               ),
         ],
       ),
+      ),
     );
   }
 
@@ -995,28 +1033,26 @@ class _TodoListPageState extends State<TodoListPage>
     final isCompleted = todo.isCompleted;
     final isAnimating = _completedTodoId == todo.id && _showCelebration;
 
-    return ReorderableDragStartListener(
-      index: index,
+    return AnimatedContainer(
       key: ValueKey(todo.id),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: isCompleted ? Colors.green[50] : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isCompleted ? Colors.green : Colors.grey[300]!,
-            width: isCompleted ? 2 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
+      duration: const Duration(milliseconds: 300),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isCompleted ? Colors.green[50] : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isCompleted ? Colors.green : Colors.grey[300]!,
+          width: isCompleted ? 2 : 1,
         ),
-        child: ListTile(
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 8,
@@ -1043,21 +1079,40 @@ class _TodoListPageState extends State<TodoListPage>
                 : null,
           ),
         ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                todo.text,
-                style: TextStyle(
-                  decoration: isCompleted ? TextDecoration.lineThrough : null,
-                  color: isCompleted ? Colors.grey[600] : Colors.black87,
-                  fontSize: 16,
+        title: _editingTodoId == todo.id
+            ? GestureDetector(
+                onTap: () {}, // 阻止事件冒泡到外部
+                child: TextField(
+                  controller: _editTextController,
+                  style: const TextStyle(fontSize: 16),
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onSubmitted: (_) => _finishEditingTodo(todo.id),
+                  onEditingComplete: () => _finishEditingTodo(todo.id),
+                ),
+              )
+            : GestureDetector(
+                onTap: () => _startEditingTodo(todo.id, todo.text),
+                child: Text(
+                  todo.text,
+                  style: TextStyle(
+                    decoration: isCompleted ? TextDecoration.lineThrough : null,
+                    color: isCompleted ? Colors.grey[600] : Colors.black87,
+                    fontSize: 16,
+                  ),
                 ),
               ),
-            ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             // 显示连续完成天数
             if (todo.consecutiveDays > 0)
               Container(
+                margin: const EdgeInsets.only(right: 4),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.orange.withOpacity(0.1),
@@ -1079,6 +1134,7 @@ class _TodoListPageState extends State<TodoListPage>
             // 显示累计已完成天数
             if (todo.totalCompletedDays > 0)
               Container(
+                margin: const EdgeInsets.only(right: 4),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.blue.withOpacity(0.1),
@@ -1097,13 +1153,22 @@ class _TodoListPageState extends State<TodoListPage>
                   ),
                 ),
               ),
+            // 删除按钮
+            IconButton(
+              icon: Icon(Icons.delete_outline, color: Colors.red[300]),
+              onPressed: () => _deleteTodo(todo.id),
+            ),
+            // 拖拽按钮
+            ReorderableDragStartListener(
+              index: index,
+              child: Icon(
+                Icons.drag_handle,
+                color: Colors.grey[400],
+                size: 24,
+              ),
+            ),
           ],
         ),
-        trailing: IconButton(
-          icon: Icon(Icons.delete_outline, color: Colors.red[300]),
-          onPressed: () => _deleteTodo(todo.id),
-        ),
-      ),
       ),
     );
   }
