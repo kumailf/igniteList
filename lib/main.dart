@@ -23,6 +23,12 @@ class IgniteListApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
+        scrollbarTheme: ScrollbarThemeData(
+          thumbVisibility: const MaterialStatePropertyAll(true),
+          thickness: const MaterialStatePropertyAll(16),
+          radius: const Radius.circular(10),
+          interactive: true,
+        ),
       ),
       home: const TodoListPage(),
       debugShowCheckedModeBanner: false,
@@ -37,6 +43,7 @@ class TodoItem {
   DateTime createdAt;
   int consecutiveDays; // 连续完成天数
   DateTime? lastCompletedDate; // 上次完成日期
+  int totalCompletedDays; // 累计已完成天数
 
   TodoItem({
     required this.id,
@@ -45,6 +52,7 @@ class TodoItem {
     required this.createdAt,
     this.consecutiveDays = 0,
     this.lastCompletedDate,
+    this.totalCompletedDays = 0,
   });
 
   // 转换为 JSON
@@ -56,6 +64,7 @@ class TodoItem {
       'createdAt': createdAt.toIso8601String(),
       'consecutiveDays': consecutiveDays,
       'lastCompletedDate': lastCompletedDate?.toIso8601String(),
+      'totalCompletedDays': totalCompletedDays,
     };
   }
 
@@ -70,6 +79,7 @@ class TodoItem {
       lastCompletedDate: json['lastCompletedDate'] != null
           ? DateTime.parse(json['lastCompletedDate'] as String)
           : null,
+      totalCompletedDays: json['totalCompletedDays'] as int? ?? 0,
     );
   }
 }
@@ -273,9 +283,34 @@ class _TodoListPageState extends State<TodoListPage>
       }
     }
 
+    // 计算累计已完成天数（如果今天还没完成过，则+1）
+    int newTotalCompletedDays = todo.totalCompletedDays;
+    if (todo.lastCompletedDate == null) {
+      // 从未完成过，累计天数+1
+      newTotalCompletedDays = todo.totalCompletedDays + 1;
+    } else {
+      final lastDateOnly = DateTime(
+        todo.lastCompletedDate!.year,
+        todo.lastCompletedDate!.month,
+        todo.lastCompletedDate!.day,
+      );
+      final todayOnly = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      );
+      // 如果上次完成日期不是今天，则累计天数+1
+      if (lastDateOnly.year != todayOnly.year ||
+          lastDateOnly.month != todayOnly.month ||
+          lastDateOnly.day != todayOnly.day) {
+        newTotalCompletedDays = todo.totalCompletedDays + 1;
+      }
+    }
+
     setState(() {
       todo.isCompleted = true;
       todo.consecutiveDays = newConsecutiveDays;
+      todo.totalCompletedDays = newTotalCompletedDays;
       todo.lastCompletedDate = now;
       _completedTodoId = id;
       _completedConsecutiveDays = newConsecutiveDays;
@@ -760,24 +795,30 @@ class _TodoListPageState extends State<TodoListPage>
                           ],
                         ),
                       )
-                    : ReorderableListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _todos.length,
-                        buildDefaultDragHandles: false,
-                        onReorder: (oldIndex, newIndex) {
-                          setState(() {
-                            if (newIndex > oldIndex) {
-                              newIndex -= 1;
-                            }
-                            final item = _todos.removeAt(oldIndex);
-                            _todos.insert(newIndex, item);
-                          });
-                          _saveTodos();
-                        },
-                        itemBuilder: (context, index) {
-                          final todo = _todos[index];
-                          return _buildTodoItem(todo, index);
-                        },
+                    : Scrollbar(
+                        thumbVisibility: true,
+                        thickness: 16,
+                        radius: const Radius.circular(10),
+                        interactive: true,
+                        child: ReorderableListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 32, 16), // 右侧增加padding避免与滚动条重叠
+                          itemCount: _todos.length,
+                          buildDefaultDragHandles: false,
+                          onReorder: (oldIndex, newIndex) {
+                            setState(() {
+                              if (newIndex > oldIndex) {
+                                newIndex -= 1;
+                              }
+                              final item = _todos.removeAt(oldIndex);
+                              _todos.insert(newIndex, item);
+                            });
+                            _saveTodos();
+                          },
+                          itemBuilder: (context, index) {
+                            final todo = _todos[index];
+                            return _buildTodoItem(todo, index);
+                          },
+                        ),
                       ),
               ),
             ],
@@ -1027,9 +1068,30 @@ class _TodoListPageState extends State<TodoListPage>
                   ),
                 ),
                 child: Text(
-                  '${todo.consecutiveDays}天',
+                  '${todo.consecutiveDays}连胜！',
                   style: TextStyle(
                     color: Colors.orange[700],
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            // 显示累计已完成天数
+            if (todo.totalCompletedDays > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.blue.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  '生涯累计：${todo.totalCompletedDays}',
+                  style: TextStyle(
+                    color: Colors.blue[700],
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
