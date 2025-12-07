@@ -211,7 +211,7 @@ class _TodoListPageState extends State<TodoListPage>
     if (text.isEmpty) return;
 
     setState(() {
-      _todos.add(TodoItem(
+      _todos.insert(0, TodoItem(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         text: text,
         createdAt: DateTime.now(),
@@ -279,7 +279,6 @@ class _TodoListPageState extends State<TodoListPage>
       todo.lastCompletedDate = now;
       _completedTodoId = id;
       _completedConsecutiveDays = newConsecutiveDays;
-      _showCelebration = true;
       
       // 将完成的待办事项移动到列表底部
       _todos.removeAt(todoIndex);
@@ -292,24 +291,22 @@ class _TodoListPageState extends State<TodoListPage>
     // 播放音效
     _playSuccessSound();
 
-    // 启动动画
+    // 先启动动画，再显示庆祝弹窗
     _confettiController.play();
     _scaleController.forward(from: 0);
     _fadeController.forward(from: 0);
     _celebrationController.forward(from: 0);
+    
+    // 延迟一帧再显示，确保动画值已初始化
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _showCelebration = true;
+        });
+      }
+    });
 
-    // 动画结束后隐藏庆祝效果
-    await Future.delayed(const Duration(milliseconds: 2000));
-    if (mounted) {
-      setState(() {
-        _showCelebration = false;
-        _completedTodoId = null;
-        _completedConsecutiveDays = 0;
-      });
-      _scaleController.reset();
-      _fadeController.reset();
-      _celebrationController.reset();
-    }
+    // 不再自动隐藏，等待用户点击屏幕
   }
 
   void _deleteTodo(String id) {
@@ -763,12 +760,23 @@ class _TodoListPageState extends State<TodoListPage>
                           ],
                         ),
                       )
-                    : ListView.builder(
+                    : ReorderableListView.builder(
                         padding: const EdgeInsets.all(16),
                         itemCount: _todos.length,
+                        buildDefaultDragHandles: false,
+                        onReorder: (oldIndex, newIndex) {
+                          setState(() {
+                            if (newIndex > oldIndex) {
+                              newIndex -= 1;
+                            }
+                            final item = _todos.removeAt(oldIndex);
+                            _todos.insert(newIndex, item);
+                          });
+                          _saveTodos();
+                        },
                         itemBuilder: (context, index) {
                           final todo = _todos[index];
-                          return _buildTodoItem(todo);
+                          return _buildTodoItem(todo, index);
                         },
                       ),
               ),
@@ -777,7 +785,19 @@ class _TodoListPageState extends State<TodoListPage>
 
           // 庆祝动画覆盖层
           if (_showCelebration)
-            IgnorePointer(
+            GestureDetector(
+              onTap: () {
+                // 点击屏幕任意地方关闭庆祝弹窗
+                setState(() {
+                  _showCelebration = false;
+                  _completedTodoId = null;
+                  _completedConsecutiveDays = 0;
+                });
+                _scaleController.reset();
+                _fadeController.reset();
+                _celebrationController.reset();
+                _confettiController.stop();
+              },
               child: Stack(
                 children: [
                   // 彩纸动画（从顶部和底部发射）
@@ -834,7 +854,7 @@ class _TodoListPageState extends State<TodoListPage>
                           color: Colors.black.withOpacity(0.3 * _fadeAnimation.value),
                           child: Center(
                             child: Transform.scale(
-                              scale: _bounceAnimation.value,
+                              scale: math.max(0.1, _bounceAnimation.value),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 50,
@@ -846,13 +866,13 @@ class _TodoListPageState extends State<TodoListPage>
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.orange.withOpacity(0.9 * _scaleAnimation.value),
-                                      blurRadius: 60 * _scaleAnimation.value,
-                                      spreadRadius: 15 * _scaleAnimation.value,
+                                      blurRadius: math.max(0.0, 60 * _scaleAnimation.value),
+                                      spreadRadius: math.max(0.0, 15 * _scaleAnimation.value),
                                     ),
                                     BoxShadow(
                                       color: Colors.amber.withOpacity(0.6 * _scaleAnimation.value),
-                                      blurRadius: 100 * _scaleAnimation.value,
-                                      spreadRadius: 25 * _scaleAnimation.value,
+                                      blurRadius: math.max(0.0, 100 * _scaleAnimation.value),
+                                      spreadRadius: math.max(0.0, 25 * _scaleAnimation.value),
                                     ),
                                   ],
                                 ),
@@ -868,7 +888,7 @@ class _TodoListPageState extends State<TodoListPage>
                                       ),
                                       child: Icon(
                                         Icons.celebration,
-                                        size: 80 * _bounceAnimation.value,
+                                        size: math.max(1.0, 80 * _bounceAnimation.value),
                                         color: Colors.orange,
                                       ),
                                     ),
@@ -879,7 +899,7 @@ class _TodoListPageState extends State<TodoListPage>
                                           ? '🎉 $_completedConsecutiveDays连胜！🎉'
                                           : '🎉 太棒了！🎉',
                                       style: TextStyle(
-                                        fontSize: 32 * _bounceAnimation.value,
+                                        fontSize: math.max(1.0, 32 * _bounceAnimation.value),
                                         fontWeight: FontWeight.bold,
                                         color: Colors.orange,
                                         shadows: [
@@ -897,7 +917,7 @@ class _TodoListPageState extends State<TodoListPage>
                                           ? '连续完成 $_completedConsecutiveDays 天！'
                                           : '你做得很好！',
                                       style: TextStyle(
-                                        fontSize: 18 * _bounceAnimation.value,
+                                        fontSize: math.max(1.0, 18 * _bounceAnimation.value),
                                         color: Colors.grey[700],
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -909,7 +929,7 @@ class _TodoListPageState extends State<TodoListPage>
                                           ? '继续保持这个势头！'
                                           : '继续加油！',
                                       style: TextStyle(
-                                        fontSize: 16 * _bounceAnimation.value,
+                                        fontSize: math.max(1.0, 16 * _bounceAnimation.value),
                                         color: Colors.grey[600],
                                       ),
                                     ),
@@ -924,35 +944,38 @@ class _TodoListPageState extends State<TodoListPage>
             ),
           ],
         ),
-      ),
+              ),
         ],
       ),
     );
   }
 
-  Widget _buildTodoItem(TodoItem todo) {
+  Widget _buildTodoItem(TodoItem todo, int index) {
     final isCompleted = todo.isCompleted;
     final isAnimating = _completedTodoId == todo.id && _showCelebration;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: isCompleted ? Colors.green[50] : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isCompleted ? Colors.green : Colors.grey[300]!,
-          width: isCompleted ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+    return ReorderableDragStartListener(
+      index: index,
+      key: ValueKey(todo.id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: isCompleted ? Colors.green[50] : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isCompleted ? Colors.green : Colors.grey[300]!,
+            width: isCompleted ? 2 : 1,
           ),
-        ],
-      ),
-      child: ListTile(
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 8,
@@ -979,18 +1002,46 @@ class _TodoListPageState extends State<TodoListPage>
                 : null,
           ),
         ),
-        title: Text(
-          todo.text,
-          style: TextStyle(
-            decoration: isCompleted ? TextDecoration.lineThrough : null,
-            color: isCompleted ? Colors.grey[600] : Colors.black87,
-            fontSize: 16,
-          ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                todo.text,
+                style: TextStyle(
+                  decoration: isCompleted ? TextDecoration.lineThrough : null,
+                  color: isCompleted ? Colors.grey[600] : Colors.black87,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            // 显示连续完成天数
+            if (todo.consecutiveDays > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.orange.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  '${todo.consecutiveDays}天',
+                  style: TextStyle(
+                    color: Colors.orange[700],
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
         ),
         trailing: IconButton(
           icon: Icon(Icons.delete_outline, color: Colors.red[300]),
           onPressed: () => _deleteTodo(todo.id),
         ),
+      ),
       ),
     );
   }
