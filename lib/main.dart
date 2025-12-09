@@ -90,6 +90,7 @@ class _TodoListPageState extends State<TodoListPage>
   final List<TodoItem> _todos = [];
   final TextEditingController _textController = TextEditingController();
   final TextEditingController _editTextController = TextEditingController();
+  final FocusNode _editFocusNode = FocusNode();
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _editingTodoId; // 正在编辑的待办项 ID
   bool _showCelebration = false;
@@ -171,6 +172,7 @@ class _TodoListPageState extends State<TodoListPage>
     _stopDailyResetTimer();
     _textController.dispose();
     _editTextController.dispose();
+    _editFocusNode.dispose();
     _audioPlayer.dispose();
     _confettiController.dispose();
     _celebrationController.dispose();
@@ -234,18 +236,15 @@ class _TodoListPageState extends State<TodoListPage>
 
     final todo = _todos[todoIndex];
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final today = _getLogicalDate(now);
 
     // 如果今天已经完成过，不重复处理
     if (todo.isCompleted && todo.lastCompletedDate != null) {
-      final lastDate = DateTime(
-        todo.lastCompletedDate!.year,
-        todo.lastCompletedDate!.month,
-        todo.lastCompletedDate!.day,
-      );
-      if (lastDate.year == today.year &&
-          lastDate.month == today.month &&
-          lastDate.day == today.day) {
+      // 使用逻辑日期来判断上次完成的日期
+      final lastLogicalDate = _getLogicalDateFromCompletion(todo.lastCompletedDate!);
+      if (lastLogicalDate.year == today.year &&
+          lastLogicalDate.month == today.month &&
+          lastLogicalDate.day == today.day) {
         // 今天已经完成过，不重复处理
         return;
       }
@@ -254,24 +253,17 @@ class _TodoListPageState extends State<TodoListPage>
     // 计算新的连续完成天数
     int newConsecutiveDays = 1;
     if (todo.lastCompletedDate != null) {
-      final lastDate = DateTime(
-        todo.lastCompletedDate!.year,
-        todo.lastCompletedDate!.month,
-        todo.lastCompletedDate!.day,
-      );
-      final yesterday = DateTime(
-        today.year,
-        today.month,
-        today.day,
-      ).subtract(const Duration(days: 1));
+      // 使用逻辑日期来判断上次完成的日期
+      final lastLogicalDate = _getLogicalDateFromCompletion(todo.lastCompletedDate!);
+      final yesterday = today.subtract(const Duration(days: 1));
       
-      // 比较日期（只比较年月日）
-      if (lastDate.year == yesterday.year &&
-          lastDate.month == yesterday.month &&
-          lastDate.day == yesterday.day) {
+      // 比较逻辑日期
+      if (lastLogicalDate.year == yesterday.year &&
+          lastLogicalDate.month == yesterday.month &&
+          lastLogicalDate.day == yesterday.day) {
         // 昨天完成过，连续天数+1
         newConsecutiveDays = todo.consecutiveDays + 1;
-      } else if (lastDate.isBefore(yesterday)) {
+      } else if (lastLogicalDate.isBefore(yesterday)) {
         // 中断了，重新开始
         newConsecutiveDays = 1;
       } else {
@@ -286,20 +278,12 @@ class _TodoListPageState extends State<TodoListPage>
       // 从未完成过，累计天数+1
       newTotalCompletedDays = todo.totalCompletedDays + 1;
     } else {
-      final lastDateOnly = DateTime(
-        todo.lastCompletedDate!.year,
-        todo.lastCompletedDate!.month,
-        todo.lastCompletedDate!.day,
-      );
-      final todayOnly = DateTime(
-        today.year,
-        today.month,
-        today.day,
-      );
-      // 如果上次完成日期不是今天，则累计天数+1
-      if (lastDateOnly.year != todayOnly.year ||
-          lastDateOnly.month != todayOnly.month ||
-          lastDateOnly.day != todayOnly.day) {
+      // 使用逻辑日期来判断上次完成的日期
+      final lastLogicalDate = _getLogicalDateFromCompletion(todo.lastCompletedDate!);
+      // 如果上次完成的逻辑日期不是今天，则累计天数+1
+      if (lastLogicalDate.year != today.year ||
+          lastLogicalDate.month != today.month ||
+          lastLogicalDate.day != today.day) {
         newTotalCompletedDays = todo.totalCompletedDays + 1;
       }
     }
@@ -354,9 +338,18 @@ class _TodoListPageState extends State<TodoListPage>
       _editingTodoId = id;
       _editTextController.text = currentText;
     });
+    // 请求焦点并将光标移动到文本末尾
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _editFocusNode.requestFocus();
+      final textLength = _editTextController.text.length;
+      _editTextController.selection = TextSelection(
+        baseOffset: textLength,
+        extentOffset: textLength,
+      );
+    });
   }
 
-  // 完成编辑待办项文本
+  // 完成编辑待办项文本（保存）
   void _finishEditingTodo(String id) {
     final newText = _editTextController.text.trim();
     if (newText.isNotEmpty) {
@@ -369,21 +362,19 @@ class _TodoListPageState extends State<TodoListPage>
         _editTextController.clear();
       });
       _saveTodos();
-    } else {
-      // 如果文本为空，取消编辑
+    }
+    _editFocusNode.unfocus();
+  }
+
+  // 取消编辑（放弃修改）
+  void _cancelEditingTodo() {
+    if (_editingTodoId != null) {
       setState(() {
         _editingTodoId = null;
         _editTextController.clear();
       });
+      _editFocusNode.unfocus();
     }
-  }
-
-  // 取消编辑
-  void _cancelEditingTodo() {
-    setState(() {
-      _editingTodoId = null;
-      _editTextController.clear();
-    });
   }
 
   // 保存待办事项到本地存储
@@ -418,12 +409,29 @@ class _TodoListPageState extends State<TodoListPage>
     }
   }
 
+  // 获取逻辑日期（如果当前时间在0:00-4:00之间，返回前一天的日期，否则返回当天）
+  DateTime _getLogicalDate(DateTime now) {
+    if (now.hour < 4) {
+      // 如果当前时间在0:00-4:00之间，算作前一天
+      final yesterday = now.subtract(const Duration(days: 1));
+      return DateTime(yesterday.year, yesterday.month, yesterday.day);
+    } else {
+      // 否则算作当天
+      return DateTime(now.year, now.month, now.day);
+    }
+  }
+
+  // 从完成日期获取逻辑日期（用于判断历史完成日期属于哪一天）
+  DateTime _getLogicalDateFromCompletion(DateTime completionDate) {
+    return _getLogicalDate(completionDate);
+  }
+
   // 检查并重置每日待办事项
   Future<void> _checkAndResetDaily() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
+      final today = _getLogicalDate(now);
       
       // 获取上次重置的日期
       final lastResetDateString = prefs.getString('lastResetDate');
@@ -434,7 +442,7 @@ class _TodoListPageState extends State<TodoListPage>
         lastResetDate = DateTime(lastResetDate.year, lastResetDate.month, lastResetDate.day);
       }
 
-      // 如果今天与上次重置日期不同，说明已经过了24点，需要重置
+      // 如果今天与上次重置日期不同，说明已经过了4点，需要重置
       if (lastResetDate == null || lastResetDate.isBefore(today)) {
         bool hasReset = false;
         setState(() {
@@ -443,30 +451,13 @@ class _TodoListPageState extends State<TodoListPage>
               todo.isCompleted = false;
               // 检查是否连续完成：如果昨天完成过，连续天数保持不变；否则重置为0
               if (todo.lastCompletedDate != null) {
-                final lastDate = DateTime(
-                  todo.lastCompletedDate!.year,
-                  todo.lastCompletedDate!.month,
-                  todo.lastCompletedDate!.day,
-                );
-                final yesterday = DateTime(
-                  today.year,
-                  today.month,
-                  today.day,
-                ).subtract(const Duration(days: 1));
-                final lastDateOnly = DateTime(
-                  lastDate.year,
-                  lastDate.month,
-                  lastDate.day,
-                );
-                final yesterdayOnly = DateTime(
-                  yesterday.year,
-                  yesterday.month,
-                  yesterday.day,
-                );
-                // 如果上次完成不是昨天，说明中断了，重置连续天数
-                if (lastDateOnly.year != yesterdayOnly.year ||
-                    lastDateOnly.month != yesterdayOnly.month ||
-                    lastDateOnly.day != yesterdayOnly.day) {
+                // 使用逻辑日期来判断上次完成的日期
+                final lastLogicalDate = _getLogicalDateFromCompletion(todo.lastCompletedDate!);
+                final yesterday = today.subtract(const Duration(days: 1));
+                // 如果上次完成的逻辑日期不是昨天，说明中断了，重置连续天数
+                if (lastLogicalDate.year != yesterday.year ||
+                    lastLogicalDate.month != yesterday.month ||
+                    lastLogicalDate.day != yesterday.day) {
                   todo.consecutiveDays = 0;
                 }
                 // 注意：如果昨天完成过，连续天数保持不变，等待今天完成时再增加
@@ -484,7 +475,7 @@ class _TodoListPageState extends State<TodoListPage>
           await _saveTodos();
         }
 
-        // 更新上次重置日期为今天
+        // 更新上次重置日期为今天（使用逻辑日期）
         await prefs.setString('lastResetDate', today.toIso8601String());
         
         debugPrint('每日重置完成: ${_todos.where((t) => !t.isCompleted).length} 个待办事项待完成');
@@ -684,7 +675,7 @@ class _TodoListPageState extends State<TodoListPage>
 
     return GestureDetector(
       onTap: () {
-        // 点击外部区域取消编辑
+        // 点击外部区域取消编辑（放弃修改）
         if (_editingTodoId != null) {
           _cancelEditingTodo();
         }
@@ -1084,15 +1075,13 @@ class _TodoListPageState extends State<TodoListPage>
                 onTap: () {}, // 阻止事件冒泡到外部
                 child: TextField(
                   controller: _editTextController,
+                  focusNode: _editFocusNode,
                   style: const TextStyle(fontSize: 16),
-                  autofocus: true,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
                   ),
-                  onSubmitted: (_) => _finishEditingTodo(todo.id),
-                  onEditingComplete: () => _finishEditingTodo(todo.id),
                 ),
               )
             : GestureDetector(
@@ -1109,64 +1098,73 @@ class _TodoListPageState extends State<TodoListPage>
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 显示连续完成天数
-            if (todo.consecutiveDays > 0)
-              Container(
-                margin: const EdgeInsets.only(right: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.orange.withOpacity(0.3),
-                    width: 1,
+            // 编辑模式下显示保存按钮
+            if (_editingTodoId == todo.id)
+              IconButton(
+                icon: Icon(Icons.check, color: Colors.green[600]),
+                onPressed: () => _finishEditingTodo(todo.id),
+                tooltip: '保存',
+              )
+            else ...[
+              // 显示连续完成天数
+              if (todo.consecutiveDays > 0)
+                Container(
+                  margin: const EdgeInsets.only(right: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.orange.withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    '${todo.consecutiveDays}连胜！',
+                    style: TextStyle(
+                      color: Colors.orange[700],
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-                child: Text(
-                  '${todo.consecutiveDays}连胜！',
-                  style: TextStyle(
-                    color: Colors.orange[700],
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+              // 显示累计已完成天数
+              if (todo.totalCompletedDays > 0)
+                Container(
+                  margin: const EdgeInsets.only(right: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.blue.withOpacity(0.3),
+                      width: 1,
+                    ),
                   ),
+                  child: Text(
+                    '生涯累计：${todo.totalCompletedDays}',
+                    style: TextStyle(
+                      color: Colors.blue[700],
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              // 删除按钮
+              IconButton(
+                icon: Icon(Icons.delete_outline, color: Colors.red[300]),
+                onPressed: () => _deleteTodo(todo.id),
+              ),
+              // 拖拽按钮
+              ReorderableDragStartListener(
+                index: index,
+                child: Icon(
+                  Icons.drag_handle,
+                  color: Colors.grey[400],
+                  size: 24,
                 ),
               ),
-            // 显示累计已完成天数
-            if (todo.totalCompletedDays > 0)
-              Container(
-                margin: const EdgeInsets.only(right: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.blue.withOpacity(0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Text(
-                  '生涯累计：${todo.totalCompletedDays}',
-                  style: TextStyle(
-                    color: Colors.blue[700],
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            // 删除按钮
-            IconButton(
-              icon: Icon(Icons.delete_outline, color: Colors.red[300]),
-              onPressed: () => _deleteTodo(todo.id),
-            ),
-            // 拖拽按钮
-            ReorderableDragStartListener(
-              index: index,
-              child: Icon(
-                Icons.drag_handle,
-                color: Colors.grey[400],
-                size: 24,
-              ),
-            ),
+            ],
           ],
         ),
       ),
